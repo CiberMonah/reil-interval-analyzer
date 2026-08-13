@@ -1,0 +1,14 @@
+jge arg0 3 10
+str 0 ret
+# if x < 3
+sub arg0 1 t0
+mul t0 t0 t1 
+add t1 1 t2
+str t2 ret
+jmp 14
+# else
+mul arg0 -1 t0
+add t0 8 t1
+str t1 ret
+#endif
+nop
