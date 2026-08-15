@@ -13,3 +13,6 @@ add_executable(reil-analyzer
 )
 
 target_include_directories(reil-analyzer PRIVATE src)
+
+enable_testing()
+add_subdirectory(tests)

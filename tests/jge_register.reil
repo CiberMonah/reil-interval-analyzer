@@ -1,0 +1,6 @@
+str 3 t0
+jge arg0 t0 5
+str 0 ret
+jmp 6
+str 1 ret
+nop
