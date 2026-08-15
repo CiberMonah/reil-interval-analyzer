@@ -1,0 +1,8 @@
+# address 1 is intentionally a comment
+
+jge arg0 -3 8
+jg arg0 0 8
+jle arg0 4 8
+jl arg0 5 8
+
+nop
