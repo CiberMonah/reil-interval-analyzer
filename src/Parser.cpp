@@ -65,13 +65,17 @@ Operand parseOperand(const std::string& token) {
     return Register{token};
 }
 
-Instruction parseInstruction(const std::string& line) {
+Instruction parseInstruction(
+    const std::string& line,
+    std::size_t address
+) {
     std::istringstream stream(line);
 
     std::string opcodeToken;
     stream >> opcodeToken;
 
     Instruction instruction{
+        .address = address,
         .opcode = parseOpcode(opcodeToken)
     };
 
@@ -86,7 +90,8 @@ Instruction parseInstruction(const std::string& line) {
     case Opcode::Jge:
         if (!(stream >> arg1 >> arg2 >> result)) {
             throw std::runtime_error(
-                "Expected three operands: " + line);
+                "Expected three operands: " + line
+            );
         }
 
         instruction.arg1 = parseOperand(arg1);
@@ -97,7 +102,8 @@ Instruction parseInstruction(const std::string& line) {
     case Opcode::Str:
         if (!(stream >> arg1 >> result)) {
             throw std::runtime_error(
-                "Expected two operands: " + line);
+                "Expected two operands: " + line
+            );
         }
 
         instruction.arg1 = parseOperand(arg1);
@@ -107,7 +113,8 @@ Instruction parseInstruction(const std::string& line) {
     case Opcode::Jmp:
         if (!(stream >> arg1)) {
             throw std::runtime_error(
-                "Expected jump target: " + line);
+                "Expected jump target: " + line
+            );
         }
 
         instruction.arg1 = parseOperand(arg1);
@@ -127,7 +134,8 @@ std::vector<Instruction> parseReil(const std::string& filename) {
 
     if (!file.is_open()) {
         throw std::runtime_error(
-            "Failed to open REIL file: " + filename);
+            "Failed to open REIL file: " + filename
+        );
     }
 
     std::vector<Instruction> program;
@@ -138,25 +146,27 @@ std::vector<Instruction> parseReil(const std::string& filename) {
     while (std::getline(file, line)) {
         ++lineNumber;
 
-        // Remove comments.
         const std::size_t commentPos = line.find('#');
+
         if (commentPos != std::string::npos) {
             line.erase(commentPos);
         }
 
-        // Check whether anything other than whitespace remains.
         if (line.find_first_not_of(" \t\r\n") == std::string::npos) {
             continue;
         }
 
         try {
-            program.push_back(parseInstruction(line));
+            program.push_back(
+                parseInstruction(line, lineNumber)
+            );
         } catch (const std::exception& error) {
             throw std::runtime_error(
                 "Error at line " +
                 std::to_string(lineNumber) +
                 ": " +
-                error.what());
+                error.what()
+            );
         }
     }
 

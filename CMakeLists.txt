@@ -9,6 +9,7 @@ add_executable(reil-analyzer
     src/main.cpp
     src/Parser.cpp
     src/Interval.cpp
+    src/Analyser.cpp
 )
 
 target_include_directories(reil-analyzer PRIVATE src)

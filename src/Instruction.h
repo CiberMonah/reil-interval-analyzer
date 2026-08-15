@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -22,6 +23,7 @@ enum class Opcode {
 };
 
 struct Instruction {
+    std::size_t address;
     Opcode opcode;
 
     std::optional<Operand> arg1;
