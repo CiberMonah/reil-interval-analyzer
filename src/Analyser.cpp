@@ -4,7 +4,6 @@
 #include <optional>
 #include <queue>
 #include <stdexcept>
-#include <utility>
 
 namespace {
 
