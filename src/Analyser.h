@@ -1,10 +1,10 @@
 #pragma once
 
+#include "CFG.h"
 #include "Instruction.h"
 #include "Interval.h"
 
-#include <cstddef>
-#include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -16,34 +16,19 @@ public:
     explicit Analyser(const std::vector<Instruction>& program);
 
     Interval analyse(const Interval& input);
+    const std::vector<std::optional<State>>& inputStates() const;
+    const std::vector<std::optional<State>>& outputStates() const;
 
 private:
     const std::vector<Instruction>& program_;
+    CFG cfg_;
+    std::vector<std::optional<State>> inputStates_;
+    std::vector<std::optional<State>> outputStates_;
 
-    std::unordered_map<std::size_t, std::size_t> addressToIndex_;
-
-    Interval getValue(
-        const Operand& operand,
-        const State& state
-    ) const;
-
-    const std::string& getRegisterName(
-        const Operand& operand
-    ) const;
-
-    std::size_t getTargetIndex(
-        const Operand& operand
-    ) const;
-
-    bool mergeState(
-        State& destination,
-        const State& source
-    ) const;
-
-    void analyseConditionalJump(
+    Interval valueOf(const Operand& operand, const State& state) const;
+    State transfer(const Instruction& instruction, const State& input) const;
+    std::optional<State> refineEdge(
         const Instruction& instruction,
-        std::size_t pc,
         const State& state,
-        const std::function<void(std::size_t, const State&)>& enqueue
-    ) const;
+        bool branch) const;
 };

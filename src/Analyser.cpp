@@ -1,228 +1,152 @@
 #include "Analyser.h"
 
 #include <algorithm>
-#include <optional>
-#include <queue>
 #include <stdexcept>
 
 namespace {
 
-bool canBeTrue(Opcode opcode, const Interval& lhs, const Interval& rhs) {
+enum class Relation { Ge, Gt, Le, Lt };
+
+Relation relationFor(Opcode opcode, bool branch) {
     switch (opcode) {
-    case Opcode::Jge: return lhs.upper >= rhs.lower;
-    case Opcode::Jg: return lhs.upper > rhs.lower;
-    case Opcode::Jle: return lhs.lower <= rhs.upper;
-    case Opcode::Jl: return lhs.lower < rhs.upper;
+    case Opcode::Jge: return branch ? Relation::Ge : Relation::Lt;
+    case Opcode::Jg: return branch ? Relation::Gt : Relation::Le;
+    case Opcode::Jle: return branch ? Relation::Le : Relation::Gt;
+    case Opcode::Jl: return branch ? Relation::Lt : Relation::Ge;
     default: throw std::runtime_error("Expected conditional jump");
     }
 }
 
-bool canBeFalse(Opcode opcode, const Interval& lhs, const Interval& rhs) {
-    switch (opcode) {
-    case Opcode::Jge: return lhs.lower < rhs.upper;
-    case Opcode::Jg: return lhs.lower <= rhs.upper;
-    case Opcode::Jle: return lhs.upper > rhs.lower;
-    case Opcode::Jl: return lhs.upper >= rhs.lower;
-    default: throw std::runtime_error("Expected conditional jump");
+bool possible(Relation relation, const Interval& lhs, const Interval& rhs) {
+    switch (relation) {
+    case Relation::Ge: return lhs.upper >= rhs.lower;
+    case Relation::Gt: return lhs.upper > rhs.lower;
+    case Relation::Le: return lhs.lower <= rhs.upper;
+    case Relation::Lt: return lhs.lower < rhs.upper;
     }
+    return false;
 }
 
-void narrow(State& state, const Operand& operand, const Interval& constraint) {
+bool sameRegister(const Operand& lhs, const Operand& rhs) {
+    const auto* left = std::get_if<Register>(&lhs);
+    const auto* right = std::get_if<Register>(&rhs);
+    return left != nullptr && right != nullptr && left->name == right->name;
+}
+
+void narrow(State& state, const Operand& operand, Interval constraint) {
     const auto* reg = std::get_if<Register>(&operand);
     if (reg == nullptr) {
         return;
     }
-
-    Interval& value = state.at(reg->name);
-    value.lower = std::max(value.lower, constraint.lower);
-    value.upper = std::min(value.upper, constraint.upper);
+    auto it = state.find(reg->name);
+    if (it == state.end()) {
+        throw std::runtime_error("Undefined register: " + reg->name);
+    }
+    it->second.lower = std::max(it->second.lower, constraint.lower);
+    it->second.upper = std::min(it->second.upper, constraint.upper);
 }
 
-bool sameRegister(const Operand& lhs, const Operand& rhs) {
-    const auto* lhsRegister = std::get_if<Register>(&lhs);
-    const auto* rhsRegister = std::get_if<Register>(&rhs);
-    return lhsRegister != nullptr && rhsRegister != nullptr &&
-           lhsRegister->name == rhsRegister->name;
+State joinStates(const State& lhs, const State& rhs) {
+    State result;
+    for (const auto& [name, interval] : lhs) {
+        const auto it = rhs.find(name);
+        if (it != rhs.end()) {
+            result.emplace(name, join(interval, it->second));
+        }
+    }
+    return result;
+}
+
+const std::string& registerName(const Operand& operand) {
+    const auto* reg = std::get_if<Register>(&operand);
+    if (reg == nullptr) {
+        throw std::runtime_error("Expected register destination");
+    }
+    return reg->name;
 }
 
 } // namespace
 
 Analyser::Analyser(const std::vector<Instruction>& program)
-    : program_(program) {
+    : program_(program), cfg_(program) {}
 
-    for (std::size_t i = 0; i < program_.size(); ++i) {
-        const auto [it, inserted] =
-            addressToIndex_.emplace(program_[i].address, i);
-
-        if (!inserted) {
-            throw std::runtime_error(
-                "Duplicate REIL address: " +
-                std::to_string(program_[i].address)
-            );
-        }
-    }
-}
-
-Interval Analyser::getValue(
-    const Operand& operand,
-    const State& state
-) const {
+Interval Analyser::valueOf(const Operand& operand, const State& state) const {
     if (const auto* immediate = std::get_if<int64_t>(&operand)) {
         return {*immediate, *immediate};
     }
-
-    const auto& reg = std::get<Register>(operand);
-
-    const auto it = state.find(reg.name);
-
+    const std::string& name = std::get<Register>(operand).name;
+    const auto it = state.find(name);
     if (it == state.end()) {
-        throw std::runtime_error(
-            "Undefined register: " + reg.name
-        );
+        throw std::runtime_error("Undefined register: " + name);
     }
-
     return it->second;
 }
 
-const std::string& Analyser::getRegisterName(
-    const Operand& operand
-) const {
-    const auto* reg = std::get_if<Register>(&operand);
-
-    if (reg == nullptr) {
-        throw std::runtime_error(
-            "Expected register operand"
-        );
+State Analyser::transfer(const Instruction& instruction, const State& input) const {
+    State output = input;
+    switch (instruction.opcode) {
+    case Opcode::Add:
+        output[registerName(*instruction.result)] =
+            add(valueOf(*instruction.arg1, input), valueOf(*instruction.arg2, input));
+        break;
+    case Opcode::Sub:
+        output[registerName(*instruction.result)] =
+            sub(valueOf(*instruction.arg1, input), valueOf(*instruction.arg2, input));
+        break;
+    case Opcode::Mul:
+        output[registerName(*instruction.result)] =
+            mul(valueOf(*instruction.arg1, input), valueOf(*instruction.arg2, input));
+        break;
+    case Opcode::Str:
+        output[registerName(*instruction.result)] = valueOf(*instruction.arg1, input);
+        break;
+    case Opcode::Jge:
+    case Opcode::Jg:
+    case Opcode::Jle:
+    case Opcode::Jl:
+    case Opcode::Jmp:
+    case Opcode::Nop:
+        break;
     }
-
-    return reg->name;
+    return output;
 }
 
-std::size_t Analyser::getTargetIndex(
-    const Operand& operand
-) const {
-    const auto* target = std::get_if<int64_t>(&operand);
+std::optional<State> Analyser::refineEdge(
+    const Instruction& instruction, const State& state, bool branch) const {
+    const Operand& lhsOperand = *instruction.arg1;
+    const Operand& rhsOperand = *instruction.arg2;
+    const Relation relation = relationFor(instruction.opcode, branch);
+    const Interval lhs = valueOf(lhsOperand, state);
+    const Interval rhs = valueOf(rhsOperand, state);
 
-    if (target == nullptr || *target < 0) {
-        throw std::runtime_error(
-            "Expected non-negative jump target"
-        );
+    if (sameRegister(lhsOperand, rhsOperand)) {
+        const bool strict = relation == Relation::Gt || relation == Relation::Lt;
+        return strict ? std::nullopt : std::optional<State>(state);
+    }
+    if (!possible(relation, lhs, rhs)) {
+        return std::nullopt;
     }
 
-    const auto it =
-        addressToIndex_.find(static_cast<std::size_t>(*target));
-
-    if (it == addressToIndex_.end()) {
-        throw std::runtime_error(
-            "Unknown jump target: " +
-            std::to_string(*target)
-        );
+    State refined = state;
+    switch (relation) {
+    case Relation::Ge:
+        narrow(refined, lhsOperand, {rhs.lower, lhs.upper});
+        narrow(refined, rhsOperand, {rhs.lower, lhs.upper});
+        break;
+    case Relation::Gt:
+        narrow(refined, lhsOperand, {rhs.lower + 1, lhs.upper});
+        narrow(refined, rhsOperand, {rhs.lower, lhs.upper - 1});
+        break;
+    case Relation::Le:
+        narrow(refined, lhsOperand, {lhs.lower, rhs.upper});
+        narrow(refined, rhsOperand, {lhs.lower, rhs.upper});
+        break;
+    case Relation::Lt:
+        narrow(refined, lhsOperand, {lhs.lower, rhs.upper - 1});
+        narrow(refined, rhsOperand, {lhs.lower + 1, rhs.upper});
+        break;
     }
-
-    return it->second;
-}
-
-bool Analyser::mergeState(
-    State& destination,
-    const State& source
-) const {
-    bool changed = false;
-
-    for (auto it = destination.begin(); it != destination.end();) {
-        const auto sourceIt = source.find(it->first);
-
-        if (sourceIt == source.end()) {
-            it = destination.erase(it);
-            changed = true;
-            continue;
-        }
-
-        const Interval merged = join(it->second, sourceIt->second);
-
-        if (merged.lower != it->second.lower ||
-            merged.upper != it->second.upper) {
-
-            it->second = merged;
-            changed = true;
-        }
-
-        ++it;
-    }
-
-    return changed;
-}
-
-void Analyser::analyseConditionalJump(
-    const Instruction& instruction,
-    std::size_t pc,
-    const State& state,
-    const std::function<void(std::size_t, const State&)>& enqueue
-) const {
-    const Interval lhs = getValue(*instruction.arg1, state);
-    const Interval rhs = getValue(*instruction.arg2, state);
-    const std::size_t target = getTargetIndex(*instruction.result);
-    const bool operandsAreEqual =
-        sameRegister(*instruction.arg1, *instruction.arg2);
-    const bool trueBranchPossible = operandsAreEqual
-        ? instruction.opcode == Opcode::Jge || instruction.opcode == Opcode::Jle
-        : canBeTrue(instruction.opcode, lhs, rhs);
-    const bool falseBranchPossible = operandsAreEqual
-        ? instruction.opcode == Opcode::Jg || instruction.opcode == Opcode::Jl
-        : canBeFalse(instruction.opcode, lhs, rhs);
-
-    if (trueBranchPossible) {
-        State branch = state;
-
-        switch (instruction.opcode) {
-        case Opcode::Jge:
-            narrow(branch, *instruction.arg1, {rhs.lower, lhs.upper});
-            narrow(branch, *instruction.arg2, {rhs.lower, lhs.upper});
-            break;
-        case Opcode::Jg:
-            narrow(branch, *instruction.arg1, {rhs.lower + 1, lhs.upper});
-            narrow(branch, *instruction.arg2, {rhs.lower, lhs.upper - 1});
-            break;
-        case Opcode::Jle:
-            narrow(branch, *instruction.arg1, {lhs.lower, rhs.upper});
-            narrow(branch, *instruction.arg2, {lhs.lower, rhs.upper});
-            break;
-        case Opcode::Jl:
-            narrow(branch, *instruction.arg1, {lhs.lower, rhs.upper - 1});
-            narrow(branch, *instruction.arg2, {lhs.lower + 1, rhs.upper});
-            break;
-        default:
-            break;
-        }
-
-        enqueue(target, branch);
-    }
-
-    if (falseBranchPossible) {
-        State branch = state;
-
-        switch (instruction.opcode) {
-        case Opcode::Jge:
-            narrow(branch, *instruction.arg1, {lhs.lower, rhs.upper - 1});
-            narrow(branch, *instruction.arg2, {lhs.lower + 1, rhs.upper});
-            break;
-        case Opcode::Jg:
-            narrow(branch, *instruction.arg1, {lhs.lower, rhs.upper});
-            narrow(branch, *instruction.arg2, {lhs.lower, rhs.upper});
-            break;
-        case Opcode::Jle:
-            narrow(branch, *instruction.arg1, {rhs.lower + 1, lhs.upper});
-            narrow(branch, *instruction.arg2, {rhs.lower, lhs.upper - 1});
-            break;
-        case Opcode::Jl:
-            narrow(branch, *instruction.arg1, {rhs.lower, lhs.upper});
-            narrow(branch, *instruction.arg2, {rhs.lower, lhs.upper});
-            break;
-        default:
-            break;
-        }
-
-        enqueue(pc + 1, branch);
-    }
+    return refined;
 }
 
 Interval Analyser::analyse(const Interval& input) {
@@ -230,144 +154,59 @@ Interval Analyser::analyse(const Interval& input) {
         throw std::runtime_error("Empty REIL program");
     }
 
-    std::unordered_map<std::size_t, State> inputStates;
-    std::queue<std::size_t> worklist;
+    const auto order = cfg_.topologicalOrder();
+    inputStates_.assign(program_.size(), std::nullopt);
+    outputStates_.assign(program_.size(), std::nullopt);
 
-    std::optional<Interval> finalResult;
-
-    State initialState;
-    initialState.emplace("arg0", input);
-
-    inputStates.emplace(0, initialState);
-    worklist.push(0);
-
-    auto finish = [&](const State& state) {
-        const auto it = state.find("ret");
-
-        if (it == state.end()) {
-            throw std::runtime_error(
-                "Program finished without ret value"
-            );
+    for (const std::size_t nodeIndex : order) {
+        std::optional<State> inputState;
+        if (nodeIndex == 0) {
+            inputState = State{{"arg0", input}};
         }
 
-        if (!finalResult.has_value()) {
-            finalResult = it->second;
-        } else {
-            finalResult = join(*finalResult, it->second);
-        }
-    };
-
-    auto enqueue = [&](std::size_t pc, const State& state) {
-        if (pc >= program_.size()) {
-            finish(state);
-            return;
-        }
-
-        auto [it, inserted] =
-            inputStates.emplace(pc, state);
-
-        if (inserted) {
-            worklist.push(pc);
-            return;
+        for (const CFGEdge& edge : cfg_.nodes()[nodeIndex].predecessors) {
+            if (!outputStates_[edge.node].has_value()) {
+                continue;
+            }
+            std::optional<State> incoming = edge.condition.has_value()
+                ? refineEdge(program_[edge.node], *outputStates_[edge.node], *edge.condition)
+                : outputStates_[edge.node];
+            if (!incoming.has_value()) {
+                continue;
+            }
+            inputState = inputState.has_value()
+                ? std::optional<State>(joinStates(*inputState, *incoming))
+                : incoming;
         }
 
-        if (mergeState(it->second, state)) {
-            worklist.push(pc);
+        if (!inputState.has_value()) {
+            continue;
         }
-    };
-
-    while (!worklist.empty()) {
-        const std::size_t pc = worklist.front();
-        worklist.pop();
-
-        State state = inputStates.at(pc);
-        const Instruction& instruction = program_[pc];
-
-        switch (instruction.opcode) {
-        case Opcode::Add: {
-            const Interval lhs =
-                getValue(*instruction.arg1, state);
-            const Interval rhs =
-                getValue(*instruction.arg2, state);
-
-            const std::string& destination =
-                getRegisterName(*instruction.result);
-
-            state[destination] = add(lhs, rhs);
-
-            enqueue(pc + 1, state);
-            break;
-        }
-
-        case Opcode::Sub: {
-            const Interval lhs =
-                getValue(*instruction.arg1, state);
-            const Interval rhs =
-                getValue(*instruction.arg2, state);
-
-            const std::string& destination =
-                getRegisterName(*instruction.result);
-
-            state[destination] = sub(lhs, rhs);
-
-            enqueue(pc + 1, state);
-            break;
-        }
-
-        case Opcode::Mul: {
-            const Interval lhs =
-                getValue(*instruction.arg1, state);
-            const Interval rhs =
-                getValue(*instruction.arg2, state);
-
-            const std::string& destination =
-                getRegisterName(*instruction.result);
-
-            state[destination] = mul(lhs, rhs);
-
-            enqueue(pc + 1, state);
-            break;
-        }
-
-        case Opcode::Str: {
-            const Interval value =
-                getValue(*instruction.arg1, state);
-
-            const std::string& destination =
-                getRegisterName(*instruction.result);
-
-            state[destination] = value;
-
-            enqueue(pc + 1, state);
-            break;
-        }
-
-        case Opcode::Jmp: {
-            const std::size_t target =
-                getTargetIndex(*instruction.arg1);
-
-            enqueue(target, state);
-            break;
-        }
-
-        case Opcode::Jge:
-        case Opcode::Jg:
-        case Opcode::Jle:
-        case Opcode::Jl:
-            analyseConditionalJump(instruction, pc, state, enqueue);
-            break;
-
-        case Opcode::Nop:
-            enqueue(pc + 1, state);
-            break;
-        }
+        inputStates_[nodeIndex] = inputState;
+        outputStates_[nodeIndex] = transfer(program_[nodeIndex], *inputState);
     }
 
-    if (!finalResult.has_value()) {
-        throw std::runtime_error(
-            "Program has no reachable exit"
-        );
+    std::optional<Interval> result;
+    for (std::size_t i = 0; i < cfg_.nodes().size(); ++i) {
+        if (!cfg_.nodes()[i].successors.empty() || !outputStates_[i].has_value()) {
+            continue;
+        }
+        const auto it = outputStates_[i]->find("ret");
+        if (it == outputStates_[i]->end()) {
+            throw std::runtime_error("Program finished without ret value");
+        }
+        result = result.has_value() ? join(*result, it->second) : it->second;
     }
+    if (!result.has_value()) {
+        throw std::runtime_error("Program has no reachable exit");
+    }
+    return *result;
+}
 
-    return *finalResult;
+const std::vector<std::optional<State>>& Analyser::inputStates() const {
+    return inputStates_;
+}
+
+const std::vector<std::optional<State>>& Analyser::outputStates() const {
+    return outputStates_;
 }
