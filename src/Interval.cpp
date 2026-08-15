@@ -20,20 +20,15 @@ Interval sub(const Interval& lhs, const Interval& rhs) {
 }
 
 Interval mul(const Interval& lhs, const Interval& rhs) {
-    Interval res;
+    const int64_t lowerLower = lhs.lower * rhs.lower;
+    const int64_t lowerUpper = lhs.lower * rhs.upper;
+    const int64_t upperLower = lhs.upper * rhs.lower;
+    const int64_t upperUpper = lhs.upper * rhs.upper;
 
-    res.lower = std::min({      lhs.lower * rhs.lower, 
-                                lhs.upper * rhs.lower,
-                                lhs.lower * rhs.upper,
-                                lhs.upper * rhs.upper
-                        });
-    res.upper = std::max({      lhs.lower * rhs.lower, 
-                                lhs.upper * rhs.lower,
-                                lhs.lower * rhs.upper,
-                                lhs.upper * rhs.upper
-                        });
-
-    return res;
+    return {
+        std::min({lowerLower, lowerUpper, upperLower, upperUpper}),
+        std::max({lowerLower, lowerUpper, upperLower, upperUpper})
+    };
 }
 
 Interval join(const Interval &lhs, const Interval &rhs) {
@@ -48,4 +43,3 @@ Interval join(const Interval &lhs, const Interval &rhs) {
 
     return res;
 }
-
