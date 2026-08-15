@@ -1,6 +1,7 @@
 #include "Parser.h"
 
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -22,6 +23,15 @@ Opcode parseOpcode(const std::string& token) {
     }
     if (token == "jge") {
         return Opcode::Jge;
+    }
+    if (token == "jg") {
+        return Opcode::Jg;
+    }
+    if (token == "jle") {
+        return Opcode::Jle;
+    }
+    if (token == "jl") {
+        return Opcode::Jl;
     }
     if (token == "jmp") {
         return Opcode::Jmp;
@@ -76,7 +86,10 @@ Instruction parseInstruction(
 
     Instruction instruction{
         .address = address,
-        .opcode = parseOpcode(opcodeToken)
+        .opcode = parseOpcode(opcodeToken),
+        .arg1 = std::nullopt,
+        .arg2 = std::nullopt,
+        .result = std::nullopt
     };
 
     std::string arg1;
@@ -88,6 +101,9 @@ Instruction parseInstruction(
     case Opcode::Sub:
     case Opcode::Mul:
     case Opcode::Jge:
+    case Opcode::Jg:
+    case Opcode::Jle:
+    case Opcode::Jl:
         if (!(stream >> arg1 >> arg2 >> result)) {
             throw std::runtime_error(
                 "Expected three operands: " + line

@@ -6,6 +6,48 @@
 #include <stdexcept>
 #include <utility>
 
+namespace {
+
+bool canBeTrue(Opcode opcode, const Interval& lhs, const Interval& rhs) {
+    switch (opcode) {
+    case Opcode::Jge: return lhs.upper >= rhs.lower;
+    case Opcode::Jg: return lhs.upper > rhs.lower;
+    case Opcode::Jle: return lhs.lower <= rhs.upper;
+    case Opcode::Jl: return lhs.lower < rhs.upper;
+    default: throw std::runtime_error("Expected conditional jump");
+    }
+}
+
+bool canBeFalse(Opcode opcode, const Interval& lhs, const Interval& rhs) {
+    switch (opcode) {
+    case Opcode::Jge: return lhs.lower < rhs.upper;
+    case Opcode::Jg: return lhs.lower <= rhs.upper;
+    case Opcode::Jle: return lhs.upper > rhs.lower;
+    case Opcode::Jl: return lhs.upper >= rhs.lower;
+    default: throw std::runtime_error("Expected conditional jump");
+    }
+}
+
+void narrow(State& state, const Operand& operand, const Interval& constraint) {
+    const auto* reg = std::get_if<Register>(&operand);
+    if (reg == nullptr) {
+        return;
+    }
+
+    Interval& value = state.at(reg->name);
+    value.lower = std::max(value.lower, constraint.lower);
+    value.upper = std::min(value.upper, constraint.upper);
+}
+
+bool sameRegister(const Operand& lhs, const Operand& rhs) {
+    const auto* lhsRegister = std::get_if<Register>(&lhs);
+    const auto* rhsRegister = std::get_if<Register>(&rhs);
+    return lhsRegister != nullptr && rhsRegister != nullptr &&
+           lhsRegister->name == rhsRegister->name;
+}
+
+} // namespace
+
 Analyser::Analyser(const std::vector<Instruction>& program)
     : program_(program) {
 
@@ -87,16 +129,16 @@ bool Analyser::mergeState(
 ) const {
     bool changed = false;
 
-    for (const auto& [name, interval] : source) {
-        auto [it, inserted] =
-            destination.emplace(name, interval);
+    for (auto it = destination.begin(); it != destination.end();) {
+        const auto sourceIt = source.find(it->first);
 
-        if (inserted) {
+        if (sourceIt == source.end()) {
+            it = destination.erase(it);
             changed = true;
             continue;
         }
 
-        const Interval merged = join(it->second, interval);
+        const Interval merged = join(it->second, sourceIt->second);
 
         if (merged.lower != it->second.lower ||
             merged.upper != it->second.upper) {
@@ -104,9 +146,84 @@ bool Analyser::mergeState(
             it->second = merged;
             changed = true;
         }
+
+        ++it;
     }
 
     return changed;
+}
+
+void Analyser::analyseConditionalJump(
+    const Instruction& instruction,
+    std::size_t pc,
+    const State& state,
+    const std::function<void(std::size_t, const State&)>& enqueue
+) const {
+    const Interval lhs = getValue(*instruction.arg1, state);
+    const Interval rhs = getValue(*instruction.arg2, state);
+    const std::size_t target = getTargetIndex(*instruction.result);
+    const bool operandsAreEqual =
+        sameRegister(*instruction.arg1, *instruction.arg2);
+    const bool trueBranchPossible = operandsAreEqual
+        ? instruction.opcode == Opcode::Jge || instruction.opcode == Opcode::Jle
+        : canBeTrue(instruction.opcode, lhs, rhs);
+    const bool falseBranchPossible = operandsAreEqual
+        ? instruction.opcode == Opcode::Jg || instruction.opcode == Opcode::Jl
+        : canBeFalse(instruction.opcode, lhs, rhs);
+
+    if (trueBranchPossible) {
+        State branch = state;
+
+        switch (instruction.opcode) {
+        case Opcode::Jge:
+            narrow(branch, *instruction.arg1, {rhs.lower, lhs.upper});
+            narrow(branch, *instruction.arg2, {rhs.lower, lhs.upper});
+            break;
+        case Opcode::Jg:
+            narrow(branch, *instruction.arg1, {rhs.lower + 1, lhs.upper});
+            narrow(branch, *instruction.arg2, {rhs.lower, lhs.upper - 1});
+            break;
+        case Opcode::Jle:
+            narrow(branch, *instruction.arg1, {lhs.lower, rhs.upper});
+            narrow(branch, *instruction.arg2, {lhs.lower, rhs.upper});
+            break;
+        case Opcode::Jl:
+            narrow(branch, *instruction.arg1, {lhs.lower, rhs.upper - 1});
+            narrow(branch, *instruction.arg2, {lhs.lower + 1, rhs.upper});
+            break;
+        default:
+            break;
+        }
+
+        enqueue(target, branch);
+    }
+
+    if (falseBranchPossible) {
+        State branch = state;
+
+        switch (instruction.opcode) {
+        case Opcode::Jge:
+            narrow(branch, *instruction.arg1, {lhs.lower, rhs.upper - 1});
+            narrow(branch, *instruction.arg2, {lhs.lower + 1, rhs.upper});
+            break;
+        case Opcode::Jg:
+            narrow(branch, *instruction.arg1, {lhs.lower, rhs.upper});
+            narrow(branch, *instruction.arg2, {lhs.lower, rhs.upper});
+            break;
+        case Opcode::Jle:
+            narrow(branch, *instruction.arg1, {rhs.lower + 1, lhs.upper});
+            narrow(branch, *instruction.arg2, {rhs.lower, lhs.upper - 1});
+            break;
+        case Opcode::Jl:
+            narrow(branch, *instruction.arg1, {rhs.lower, lhs.upper});
+            narrow(branch, *instruction.arg2, {rhs.lower, lhs.upper});
+            break;
+        default:
+            break;
+        }
+
+        enqueue(pc + 1, branch);
+    }
 }
 
 Interval Analyser::analyse(const Interval& input) {
@@ -234,86 +351,12 @@ Interval Analyser::analyse(const Interval& input) {
             break;
         }
 
-        case Opcode::Jge: {
-            /*
-             * Пока поддерживаем форму, которая есть
-             * в тестовом задании:
-             *
-             *     jge register immediate target
-             *
-             * Например:
-             *
-             *     jge arg0 3 10
-             */
-
-            const auto* reg =
-                std::get_if<Register>(&*instruction.arg1);
-
-            const auto* threshold =
-                std::get_if<int64_t>(&*instruction.arg2);
-
-            if (reg == nullptr || threshold == nullptr) {
-                throw std::runtime_error(
-                    "Jge currently expects: "
-                    "register immediate target"
-                );
-            }
-
-            const auto stateIt = state.find(reg->name);
-
-            if (stateIt == state.end()) {
-                throw std::runtime_error(
-                    "Undefined register in Jge: " +
-                    reg->name
-                );
-            }
-
-            const Interval current = stateIt->second;
-
-            const std::size_t target =
-                getTargetIndex(*instruction.result);
-
-            /*
-             * TRUE:
-             *
-             * x >= threshold
-             */
-            if (current.upper >= *threshold) {
-                State trueState = state;
-
-                trueState[reg->name] = {
-                    std::max(current.lower, *threshold),
-                    current.upper
-                };
-
-                enqueue(target, trueState);
-            }
-
-            /*
-             * FALSE:
-             *
-             * x < threshold
-             *
-             * Так как у нас целые числа:
-             *
-             * x <= threshold - 1
-             */
-            if (current.lower < *threshold) {
-                State falseState = state;
-
-                falseState[reg->name] = {
-                    current.lower,
-                    std::min(
-                        current.upper,
-                        *threshold - 1
-                    )
-                };
-
-                enqueue(pc + 1, falseState);
-            }
-
+        case Opcode::Jge:
+        case Opcode::Jg:
+        case Opcode::Jle:
+        case Opcode::Jl:
+            analyseConditionalJump(instruction, pc, state, enqueue);
             break;
-        }
 
         case Opcode::Nop:
             enqueue(pc + 1, state);

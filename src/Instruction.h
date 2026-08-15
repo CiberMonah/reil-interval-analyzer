@@ -18,6 +18,9 @@ enum class Opcode {
     Mul,
     Str,
     Jge,
+    Jg,
+    Jle,
+    Jl,
     Jmp,
     Nop
 };

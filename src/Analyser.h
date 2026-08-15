@@ -4,6 +4,7 @@
 #include "Interval.h"
 
 #include <cstddef>
+#include <functional>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -37,5 +38,12 @@ private:
     bool mergeState(
         State& destination,
         const State& source
+    ) const;
+
+    void analyseConditionalJump(
+        const Instruction& instruction,
+        std::size_t pc,
+        const State& state,
+        const std::function<void(std::size_t, const State&)>& enqueue
     ) const;
 };
