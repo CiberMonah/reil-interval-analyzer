@@ -140,6 +140,11 @@ Instruction parseInstruction(
         break;
     }
 
+    std::string extra;
+    if (stream >> extra) {
+        throw std::runtime_error("Unexpected operand: " + extra);
+    }
+
     return instruction;
 }
 

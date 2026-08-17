@@ -58,6 +58,12 @@ void testParser() {
     check(std::get<int64_t>(*program[0].arg2) == -3, "negative immediate parses");
     check(std::get<int64_t>(*program[0].result) == 8,
           "jump line address is preserved");
+
+    try {
+        parseReil(std::string(TEST_SOURCE_DIR) + "/parser_invalid.reil");
+        check(false, "parser rejects an extra operand");
+    } catch (const std::runtime_error&) {
+    }
 }
 
 void testCFG() {
