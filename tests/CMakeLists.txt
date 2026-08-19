@@ -21,6 +21,14 @@ add_interval_test(testcase_1_5
     ${PROJECT_SOURCE_DIR}/examples/testcase.reil 1 5 "1, 5")
 add_interval_test(loop_0_1
     ${PROJECT_SOURCE_DIR}/examples/testcase_loop.reil 0 1 "10, 13")
+add_interval_test(loop_2_3
+    ${PROJECT_SOURCE_DIR}/examples/testcase_loop.reil 2 3 "10, 13")
+add_interval_test(loop_7_8
+    ${PROJECT_SOURCE_DIR}/examples/testcase_loop.reil 7 8 "10, 13")
+add_interval_test(loop_10_12
+    ${PROJECT_SOURCE_DIR}/examples/testcase_loop.reil 10 12 "10, 12")
+add_interval_test(loop_11_13
+    ${PROJECT_SOURCE_DIR}/examples/testcase_loop.reil 11 13 "11, 13")
 
 foreach(op jge jg jle jl)
     add_interval_test(
