@@ -1,0 +1,9 @@
+str arg0 t1
+# while result < 10
+jge t1 10 8
+add t1 4 t2
+str t2 t1
+jmp 3
+# after while
+str t1 ret
+nop

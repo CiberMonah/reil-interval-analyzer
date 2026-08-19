@@ -1,6 +1,7 @@
 #include "Analyser.h"
 
 #include <algorithm>
+#include <queue>
 #include <stdexcept>
 
 namespace {
@@ -55,6 +56,20 @@ State joinStates(const State& lhs, const State& rhs) {
         }
     }
     return result;
+}
+
+bool equalStates(const State& lhs, const State& rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (const auto& [name, interval] : lhs) {
+        const auto it = rhs.find(name);
+        if (it == rhs.end() || it->second.lower != interval.lower ||
+            it->second.upper != interval.upper) {
+            return false;
+        }
+    }
+    return true;
 }
 
 const std::string& registerName(const Operand& operand) {
@@ -154,11 +169,10 @@ Interval Analyser::analyse(const Interval& input) {
         throw std::runtime_error("Empty REIL program");
     }
 
-    const auto order = cfg_.topologicalOrder();
     inputStates_.assign(program_.size(), std::nullopt);
     outputStates_.assign(program_.size(), std::nullopt);
 
-    for (const std::size_t nodeIndex : order) {
+    auto computeInput = [&](std::size_t nodeIndex) {
         std::optional<State> inputState;
         if (nodeIndex == 0) {
             inputState = State{{"arg0", input}};
@@ -179,11 +193,57 @@ Interval Analyser::analyse(const Interval& input) {
                 : incoming;
         }
 
-        if (!inputState.has_value()) {
-            continue;
+        return inputState;
+    };
+
+    try {
+        const auto order = cfg_.topologicalOrder();
+        for (const std::size_t nodeIndex : order) {
+            std::optional<State> inputState = computeInput(nodeIndex);
+
+            if (!inputState.has_value()) {
+                continue;
+            }
+            inputStates_[nodeIndex] = inputState;
+            outputStates_[nodeIndex] = transfer(program_[nodeIndex], *inputState);
         }
-        inputStates_[nodeIndex] = inputState;
-        outputStates_[nodeIndex] = transfer(program_[nodeIndex], *inputState);
+    } catch (const std::runtime_error& error) {
+        if (std::string(error.what()) != "CFG contains a cycle") {
+            throw;
+        }
+
+        std::queue<std::size_t> worklist;
+        std::vector<bool> queued(program_.size(), false);
+        worklist.push(0);
+        queued[0] = true;
+
+        while (!worklist.empty()) {
+            const std::size_t nodeIndex = worklist.front();
+            worklist.pop();
+            queued[nodeIndex] = false;
+
+            std::optional<State> inputState = computeInput(nodeIndex);
+            if (!inputState.has_value()) {
+                continue;
+            }
+
+            const State outputState = transfer(program_[nodeIndex], *inputState);
+            const bool outputChanged = !outputStates_[nodeIndex].has_value() ||
+                !equalStates(*outputStates_[nodeIndex], outputState);
+            inputStates_[nodeIndex] = std::move(inputState);
+
+            if (!outputChanged) {
+                continue;
+            }
+            outputStates_[nodeIndex] = outputState;
+
+            for (const CFGEdge& edge : cfg_.nodes()[nodeIndex].successors) {
+                if (!queued[edge.node]) {
+                    worklist.push(edge.node);
+                    queued[edge.node] = true;
+                }
+            }
+        }
     }
 
     std::optional<Interval> result;

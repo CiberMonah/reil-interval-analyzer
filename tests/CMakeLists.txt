@@ -19,6 +19,8 @@ add_interval_test(testcase_0_2
     ${PROJECT_SOURCE_DIR}/examples/testcase.reil 0 2 "0, 2")
 add_interval_test(testcase_1_5
     ${PROJECT_SOURCE_DIR}/examples/testcase.reil 1 5 "1, 5")
+add_interval_test(loop_0_1
+    ${PROJECT_SOURCE_DIR}/examples/testcase_loop.reil 0 1 "10, 13")
 
 foreach(op jge jg jle jl)
     add_interval_test(
