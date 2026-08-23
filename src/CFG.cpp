@@ -94,7 +94,7 @@ std::vector<std::size_t> CFG::topologicalOrder() const {
     }
 
     if (order.size() != nodes_.size()) {
-        throw std::runtime_error("CFG contains a cycle");
+        throw CFGCycleError();
     }
     return order;
 }

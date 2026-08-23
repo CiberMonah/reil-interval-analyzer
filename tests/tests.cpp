@@ -89,7 +89,7 @@ void testCFG() {
     try {
         CFG(cyclic).topologicalOrder();
         check(false, "cycle must be rejected");
-    } catch (const std::runtime_error& error) {
+    } catch (const CFGCycleError& error) {
         check(std::string(error.what()) == "CFG contains a cycle", "cycle diagnostic");
     }
 }

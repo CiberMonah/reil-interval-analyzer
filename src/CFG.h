@@ -4,7 +4,13 @@
 
 #include <cstddef>
 #include <optional>
+#include <stdexcept>
 #include <vector>
+
+class CFGCycleError : public std::runtime_error {
+public:
+    CFGCycleError() : std::runtime_error("CFG contains a cycle") {}
+};
 
 struct CFGEdge {
     std::size_t node;

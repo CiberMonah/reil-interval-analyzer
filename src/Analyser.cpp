@@ -144,22 +144,32 @@ std::optional<State> Analyser::refineEdge(
 
     State refined = state;
     switch (relation) {
-    case Relation::Ge:
-        narrow(refined, lhsOperand, {rhs.lower, lhs.upper});
-        narrow(refined, rhsOperand, {rhs.lower, lhs.upper});
+    case Relation::Ge: {
+        const Interval commonRange{rhs.lower, lhs.upper};
+        narrow(refined, lhsOperand, commonRange);
+        narrow(refined, rhsOperand, commonRange);
         break;
-    case Relation::Gt:
-        narrow(refined, lhsOperand, {rhs.lower + 1, lhs.upper});
-        narrow(refined, rhsOperand, {rhs.lower, lhs.upper - 1});
+    }
+    case Relation::Gt: {
+        const Interval lhsConstraint{rhs.lower + 1, lhs.upper};
+        const Interval rhsConstraint{rhs.lower, lhs.upper - 1};
+        narrow(refined, lhsOperand, lhsConstraint);
+        narrow(refined, rhsOperand, rhsConstraint);
         break;
-    case Relation::Le:
-        narrow(refined, lhsOperand, {lhs.lower, rhs.upper});
-        narrow(refined, rhsOperand, {lhs.lower, rhs.upper});
+    }
+    case Relation::Le: {
+        const Interval commonRange{lhs.lower, rhs.upper};
+        narrow(refined, lhsOperand, commonRange);
+        narrow(refined, rhsOperand, commonRange);
         break;
-    case Relation::Lt:
-        narrow(refined, lhsOperand, {lhs.lower, rhs.upper - 1});
-        narrow(refined, rhsOperand, {lhs.lower + 1, rhs.upper});
+    }
+    case Relation::Lt: {
+        const Interval lhsConstraint{lhs.lower, rhs.upper - 1};
+        const Interval rhsConstraint{lhs.lower + 1, rhs.upper};
+        narrow(refined, lhsOperand, lhsConstraint);
+        narrow(refined, rhsOperand, rhsConstraint);
         break;
+    }
     }
     return refined;
 }
@@ -207,11 +217,7 @@ Interval Analyser::analyse(const Interval& input) {
             inputStates_[nodeIndex] = inputState;
             outputStates_[nodeIndex] = transfer(program_[nodeIndex], *inputState);
         }
-    } catch (const std::runtime_error& error) {
-        if (std::string(error.what()) != "CFG contains a cycle") {
-            throw;
-        }
-
+    } catch (const CFGCycleError&) {
         std::queue<std::size_t> worklist;
         std::vector<bool> queued(program_.size(), false);
         worklist.push(0);
