@@ -138,6 +138,30 @@ void testAnalysis() {
     checkInterval(second.analyse({1, 5}), {1, 5}, "supplied testcase [1,5]");
 }
 
+void testLoopAnalysis() {
+    const auto program = parseReil(
+        std::string(PROJECT_SOURCE_DIR_PATH) + "/examples/testcase_loop.reil");
+    const CFG cfg(program);
+
+    check(program[4].address == 6 && program[1].address == 3,
+          "loop uses physical REIL addresses");
+    check(cfg.nodes()[4].successors.size() == 1 &&
+          cfg.nodes()[4].successors[0].node == 1,
+          "loop back edge goes from line 6 to line 3");
+    check(cfg.nodes()[1].predecessors.size() == 2,
+          "loop header has entry and back-edge predecessors");
+
+    try {
+        cfg.topologicalOrder();
+        check(false, "loop CFG must not have a topological order");
+    } catch (const CFGCycleError&) {
+    }
+
+    Analyser analyser(program);
+    checkInterval(analyser.analyse({0, 1}), {10, 13},
+                  "worklist reaches a fixed point for the loop");
+}
+
 } // namespace
 
 int main() {
@@ -146,6 +170,7 @@ int main() {
         testParser();
         testCFG();
         testAnalysis();
+        testLoopAnalysis();
     } catch (const std::exception& error) {
         std::cerr << "Unexpected exception: " << error.what() << '\n';
         return 1;
